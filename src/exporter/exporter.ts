@@ -78,6 +78,8 @@ export class USDZExport {
       options.quickLookCompatible
     );
 
+    console.log(output);
+
     files[modelFileName] = strToU8(output);
 
     output = null;
@@ -111,7 +113,7 @@ export class USDZExport {
       offset = file.length;
     }
 
-    return zipSync( files, { level: 0 } );
+    return zipSync(files, { level: 0 });
   }
 
   static BuildHeader() {
