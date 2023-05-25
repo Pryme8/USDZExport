@@ -113,6 +113,8 @@ export class USDZExport {
       offset = file.length;
     }
 
+    console.log(files);
+
     return zipSync(files, { level: 0 });
   }
 
@@ -173,7 +175,7 @@ export class USDZExport {
 		normal3f[] normals = [${USDZExport.BuildVector3Array(normals, normalCount)}] (
 			interpolation = "vertex"
 		)
-        		point3f[] points = [${USDZExport.BuildVector3Array(positions, count)}]
+    point3f[] points = [${USDZExport.BuildVector3Array(positions, count)}]
 ${USDZExport.BuildPrimvars(mesh)}
 		uniform token subdivisionScheme = "none"
 	}

@@ -78,9 +78,9 @@ export class TestScene {
     );
 
     scene.onAfterRenderObservable.addOnce(() => {
-      USDZExport.Parse(scene, {}).then((usdz) => {
+      USDZExport.Parse(scene, {}).then((data) => {
         const downloadButton = document.createElement("a");   
-        downloadButton.href = URL.createObjectURL( new Blob( [ usdz ], { type: 'application/octet-stream' } ));
+        downloadButton.href = URL.createObjectURL( new Blob( [ data ], { type: 'application/octet-stream' } ));
         document.body.appendChild(downloadButton);
         downloadButton.click()
         document.body.removeChild(downloadButton);
