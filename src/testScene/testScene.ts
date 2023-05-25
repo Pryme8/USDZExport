@@ -79,7 +79,11 @@ export class TestScene {
 
     scene.onAfterRenderObservable.addOnce(() => {
       USDZExport.Parse(scene, {}).then((usdz) => {
-        console.log(usdz);
+        const downloadButton = document.createElement("a");   
+        downloadButton.href = URL.createObjectURL( new Blob( [ usdz ], { type: 'application/octet-stream' } ));
+        document.body.appendChild(downloadButton);
+        downloadButton.click()
+        document.body.removeChild(downloadButton);
       })
     });
 
@@ -99,3 +103,5 @@ export class TestScene {
     this._scene = scene;
   }
 }
+
+
