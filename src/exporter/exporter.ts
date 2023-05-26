@@ -1,6 +1,7 @@
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import { Camera } from "@babylonjs/core/Cameras/camera";
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { Matrix, Vector2 } from "@babylonjs/core/Maths/math";
 import { AbstractMesh, TransformNode } from "@babylonjs/core/Meshes";
@@ -61,18 +62,18 @@ export class USDZExport {
       }
     });
 
-    // if (scene.activeCameras.length) {
-    //   scene.activeCameras.forEach((camera) => {
-    //     console.log(camera);
-    //     output += USDZExport.BuildCamera(camera);
-    //   });
-    // } else {
-    //   output += USDZExport.BuildCamera(scene.activeCamera);
-    // }
+    if (scene.activeCameras.length) {
+      scene.activeCameras.forEach((camera) => {
+        console.log(camera);
+        output += USDZExport.BuildCamera(camera);
+      });
+    } else {
+      output += USDZExport.BuildCamera(scene.activeCamera);
+    }
 
     output += USDZExport.BuildSceneEnd();
 
-    output += USDZExport.BuildMaterials(
+    output += await USDZExport.BuildMaterials(
       materials,
       textures,
       options.quickLookCompatible
@@ -87,7 +88,7 @@ export class USDZExport {
     for (const id in textures) {     
       const texture = textures[id] as Texture;       
       const image = await USDZExport.TextureToImage(texture);
-      const canvas = USDZExport.ImageToCanvas(image, texture.invertY);
+      const canvas = USDZExport.ImageToCanvas(image, texture.invertY);      
       const blob: Blob = await new Promise((resolve) =>
         canvas.toBlob(resolve, "image/png", 1)
       );
@@ -174,26 +175,25 @@ ${mesh}
   }
 
   static BuildMesh(mesh: AbstractMesh) {
-    const name = mesh.name;
+
     const positions = mesh.getVerticesData(VertexBuffer.PositionKind); 
     const count = positions.length;
-
     //Need to support no normals.
     const normals = mesh.getVerticesData(VertexBuffer.NormalKind);
     const normalCount = normals.length;
 
     return `
-def Mesh "mesh_${mesh.uniqueId}"
-	{
-		int[] faceVertexCounts = [${USDZExport.BuildMeshVertexCount(count)}]
-		int[] faceVertexIndices = [${USDZExport.BuildMeshVertexIndices(mesh)}]
-		normal3f[] normals = [${USDZExport.BuildVector3Array(normals, normalCount)}] (
-			interpolation = "vertex"
-		)
+  def Mesh "mesh_${mesh.uniqueId}"
+  {
+    int[] faceVertexCounts = [${USDZExport.BuildMeshVertexCount(count)}]
+    int[] faceVertexIndices = [${USDZExport.BuildMeshVertexIndices(mesh)}]
+    normal3f[] normals = [${USDZExport.BuildVector3Array(normals, normalCount)}] (
+      interpolation = "vertex"
+    )
     point3f[] points = [${USDZExport.BuildVector3Array(positions, count)}]
 ${USDZExport.BuildPrimVars(mesh)}
-		uniform token subdivisionScheme = "none"
-	}
+    uniform token subdivisionScheme = "none"
+  }
 `;
   }
 
@@ -217,7 +217,7 @@ ${USDZExport.BuildPrimVars(mesh)}
   static BuildVector3Array(attribute, count) {
     if (attribute === undefined) {
       console.warn("USDZExporter: Normals missing.");
-      return Array(count).fill("(0, 0, 0)").join(", ");
+      return Array(count/3).fill("(0, 0, 0)").join(", ");
     }
 
     const array = [];
@@ -239,7 +239,7 @@ ${USDZExport.BuildPrimVars(mesh)}
   static BuildVector2Array(attribute, count) {
     if(!attribute.length) {
       console.warn("USDZExporter: UVs missing.");
-      return Array(count).fill("(0, 0)").join(", ");
+      return Array(count/2).fill("(0, 0)").join(", ");
     }
 
     const array = [];
@@ -423,13 +423,13 @@ ${USDZExport.BuildPrimVars(mesh)}
     }
   }
 
-  static BuildMaterials(materials, textures, quickLookCompatible = false) {
+  static async BuildMaterials(materials, textures, quickLookCompatible = false) {
     const array = [];
     for (const uuid in materials) {
       const material = materials[uuid];
 
       array.push(
-        USDZExport.BuildMaterial(
+        await USDZExport.BuildMaterial(
           material,
           textures,
           quickLookCompatible
@@ -444,7 +444,7 @@ ${array.join("")}
 `;
   }
 
-  static BuildMaterial(
+  static async BuildMaterial(
     material: PBRMaterial,
     textures,
     quickLookCompatible = false
@@ -454,6 +454,46 @@ ${array.join("")}
     const pad = "			";
     const inputs = [];
     const samplers = [];
+    const scene = material.getScene()
+
+    const getChannelIndex = (channel: string) => {
+      switch(channel){
+        case "r": return 0;
+        case "g": return 1;
+        case "b": return 2;
+        case "a": return 3;
+      }
+    }
+
+    async function createDynamicTextureFromChannel(texture: Texture, channel: string){
+      const dt = new DynamicTexture("dt", {width: texture.getSize().width, height: texture.getSize().height}, scene, false);
+      const ctx = dt.getContext();
+      const img = await texture.readPixels();
+      const data = (ctx as any).createImageData(texture.getSize().width, texture.getSize().height);
+      const count = (texture.getSize().width * texture.getSize().height) * 4;
+      
+      for(let i = 0; i < count; i += 4){
+        const value = (channel === "r") ? 255 - img[i+getChannelIndex(channel)] : img[i+getChannelIndex(channel)];        
+        data.data[i] = value;
+        data.data[i+1] = value;
+        data.data[i+2] = value;
+        data.data[i+3] = 255;
+      }      
+     
+      ctx.putImageData(data, 0, 0);
+      dt.update(texture.invertY);
+      return dt;
+    }
+
+    async function breakApartMetallicRoughnessAo(texture: Texture){
+      const ao = await createDynamicTextureFromChannel(texture, "r");
+      ao.name = "ao"
+      const roughness = await createDynamicTextureFromChannel(texture, "g");
+      roughness.name = "roughness"
+      const metallic = await createDynamicTextureFromChannel(texture, "b");
+      metallic.name = "metallic"
+      return {ao, roughness, metallic};
+    }
 
     function buildTexture(texture: Texture, mapType, color = undefined) {
       const id = texture.uniqueId + "_" + texture.invertY;
@@ -608,41 +648,31 @@ ${array.join("")}
       samplers.push(buildTexture(material.bumpTexture as Texture, "normal"));
     }
 
-    if (material.ambientTexture !== null) {
-      inputs.push(
-        `${pad}float inputs:occlusion.connect = </Materials/Material_${material.uniqueId}/Texture_${material.ambientTexture.uniqueId}_occlusion.outputs:r>`
-      );
-      samplers.push(
-        buildTexture(material.ambientTexture as Texture, "occlusion")
-      );
-    }
-
-    // if ( material.roughnessMap !== null && material.roughness === 1 ) {
-
-    // 	inputs.push( `${ pad }float inputs:roughness.connect = </Materials/Material_${ material.id }/Texture_${ material.roughnessMap.id }_roughness.outputs:g>` );
-
-    // 	samplers.push( buildTexture( material.roughnessMap, 'roughness' ) );
-
-    // } else {
-
-    // 	inputs.push( `${ pad }float inputs:roughness = ${ material.roughness }` );
-
+    // if (material.ambientTexture !== null) {
+    //   inputs.push(
+    //     `${pad}float inputs:occlusion.connect = </Materials/Material_${material.uniqueId}/Texture_${material.ambientTexture.uniqueId}_occlusion.outputs:r>`
+    //   );
+    //   samplers.push(
+    //     buildTexture(material.ambientTexture as Texture, "occlusion")
+    //   );
     // }
-    // 	if ( material.metalnessMap !== null && material.metalness === 1 ) {
 
-    // 		inputs.push( `${ pad }float inputs:metallic.connect = </Materials/Material_${ material.id }/Texture_${ material.metalnessMap.id }_metallic.outputs:b>` );
+    if (material.metallicTexture !== null) {
+      const maps = await breakApartMetallicRoughnessAo(material.metallicTexture as Texture)      
 
-    // 		samplers.push( buildTexture( material.metalnessMap, 'metallic' ) );
+      inputs.push( `${ pad }float inputs:roughness.connect = </Materials/Material_${ material.uniqueId }/Texture_${ maps.roughness.uniqueId }_roughness.outputs:g>` );
+      samplers.push( buildTexture( maps.roughness, 'roughness' ) );  
 
-    // 	} else {
+      inputs.push( `${ pad }float inputs:metallic.connect = </Materials/Material_${ material.uniqueId }/Texture_${ maps.metallic.uniqueId }_metallic.outputs:b>` );
+      samplers.push( buildTexture( maps.metallic, 'metallic' ) );   
 
-    // 		inputs.push( `${ pad }float inputs:metallic = ${ material.metalness }` );
+      inputs.push( `${pad}float inputs:occlusion.connect = </Materials/Material_${material.uniqueId}/Texture_${maps.ao.uniqueId}_occlusion.outputs:r>` );
+      samplers.push( buildTexture(maps.ao, "occlusion") );
 
-    // 	}
-
-    //TODO: Convert all this to PBRMaterial
-    inputs.push(`${pad}float inputs:roughness = ${1}`);
-    inputs.push(`${pad}float inputs:metallic = ${0}`);
+    }else{
+      inputs.push( `${ pad }float inputs:roughness = ${ material.roughness }` );
+      inputs.push( `${ pad }float inputs:metallic = ${ material.metallic }` );
+    }
 
     if (material.opacityTexture !== null) {
       inputs.push(
@@ -656,11 +686,11 @@ ${array.join("")}
       inputs.push(`${pad}float inputs:opacity = ${material.alpha}`);
     }
 
-    // 	if ( material.isMeshPhysicalMaterial ) {
-    // 		inputs.push( `${ pad }float inputs:clearcoat = ${ material.clearcoat }` );
-    // 		inputs.push( `${ pad }float inputs:clearcoatRoughness = ${ material.clearcoatRoughness }` );
-    // 		inputs.push( `${ pad }float inputs:ior = ${ material.ior }` );
-    // 	}
+    	if ( material.isMetallicWorkflow ) {
+    		inputs.push( `${ pad }float inputs:clearcoat = ${ 0.0 }` );
+    		inputs.push( `${ pad }float inputs:clearcoatRoughness = ${ 0.1 }` );
+    		inputs.push( `${ pad }float inputs:ior = ${ material.metallicF0Factor }` );
+    	}
 
     return `
 	def Material "Material_${material.uniqueId}"
@@ -696,13 +726,17 @@ ${samplers.join("\n")}
 
   static BuildUSDFileAsString(dataToInsert) {
     let output = USDZExport.BuildHeader();
-    output += dataToInsert;
-    console.log(output)
+    output += dataToInsert; 
     //output += USDZExport.BuildFooter();
     return strToU8(output);
   }
 
   static async TextureToImage(texture): Promise<HTMLImageElement> {   
+
+    if(texture.getClassName() === "DynamicTexture"){
+      return texture
+    }
+
     return new Promise((resolve, reject) => {
       const image = new Image();
       image.crossOrigin = "anonymous"
@@ -715,6 +749,9 @@ ${samplers.join("\n")}
   }
 
   static ImageToCanvas(image, flipY): HTMLCanvasElement {
+    if(image?.getClassName && image.getClassName() === "DynamicTexture"){
+      return image._canvas
+    }
     if (
       (typeof HTMLImageElement !== "undefined" &&
         image instanceof HTMLImageElement) ||
