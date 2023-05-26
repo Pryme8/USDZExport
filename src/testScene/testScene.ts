@@ -8,6 +8,8 @@ import { Color3} from "@babylonjs/core/Maths/math";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { USDZExport } from "../exporter/exporter";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import "@babylonjs/loaders/glTF"
+import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
 
 export class TestScene {
   public static Instance: TestScene;
@@ -62,22 +64,26 @@ export class TestScene {
 
     const divFps = document.getElementById("fps");
 
-    var sphere = MeshBuilder.CreateSphere(
-      "sphere",
-      { diameter: 2, segments: 32 },
-      scene
-    );
-    sphere.position.y = 1;
-    const sphereMat = new StandardMaterial("sphereMat", scene);
-    sphereMat.diffuseColor = new Color3(0.58, 0.23, 0.59);
-    sphere.material = sphereMat;
-    var ground = MeshBuilder.CreateGround(
-      "ground",
-      { width: 6, height: 6 },
-      scene
-    );
+    // var sphere = MeshBuilder.CreateSphere(
+    //   "sphere",
+    //   { diameter: 2, segments: 32 },
+    //   scene
+    // );
+    // sphere.position.y = 1;
+    // const sphereMat = new StandardMaterial("sphereMat", scene);
+    // sphereMat.diffuseColor = new Color3(0.58, 0.23, 0.59);
+    // sphere.material = sphereMat;
+    // var ground = MeshBuilder.CreateGround(
+    //   "ground",
+    //   { width: 6, height: 6 },
+    //   scene
+    // );
 
-    scene.onAfterRenderObservable.addOnce(() => {
+    // scene.onAfterRenderObservable.addOnce(() => {
+   
+    // });
+
+    SceneLoader.ImportMesh("", "https://www.babylonjs.com/Assets/DamagedHelmet/glTF/", "DamagedHelmet.gltf", scene, (newMeshes)=>{
       USDZExport.Parse(scene, {}).then((data) => {
         const downloadButton = document.createElement("a");   
         downloadButton.href = URL.createObjectURL( new Blob( [ data ], { type: 'application/octet-stream' } ));

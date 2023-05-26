@@ -1,9 +1,9 @@
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import { Camera } from "@babylonjs/core/Cameras/camera";
+import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Matrix, Vector2 } from "@babylonjs/core/Maths/math";
-import { AbstractMesh } from "@babylonjs/core/Meshes";
+import { AbstractMesh, TransformNode } from "@babylonjs/core/Meshes";
 import { Scene } from "@babylonjs/core/scene";
 import { strToU8, zipSync } from "fflate";
 
@@ -32,21 +32,21 @@ export class USDZExport {
 
     let sharedMat = null;
 
-    scene.getActiveMeshes().forEach((mesh) => {
+    scene.meshes.filter((mesh)=>(mesh as any).geometry).forEach((mesh) => {
       //Add More Materials at somepoint
       if (mesh.material === null) {
         if (sharedMat === null) {
-          sharedMat = new StandardMaterial(`default.mat`, scene);
+          sharedMat = new PBRMaterial(`default.mat`, scene);
         }
         mesh.material = sharedMat;
       }
 
       switch (mesh.material.getClassName()) {
-        case "StandardMaterial":
+        case "PBRMaterial":
           const geometryFileName =
             "geometries/Geometry_" + mesh.uniqueId + ".usda";
           if (!(geometryFileName in files)) {
-            const meshObject = USDZExport.BuildMesh(mesh);
+            const meshObject = USDZExport.BuildMeshObject(mesh);
             files[geometryFileName] =
               USDZExport.BuildUSDFileAsString(meshObject);
           }
@@ -61,14 +61,14 @@ export class USDZExport {
       }
     });
 
-    if (scene.activeCameras.length) {
-      scene.activeCameras.forEach((camera) => {
-        console.log(camera);
-        output += USDZExport.BuildCamera(camera);
-      });
-    } else {
-      output += USDZExport.BuildCamera(scene.activeCamera);
-    }
+    // if (scene.activeCameras.length) {
+    //   scene.activeCameras.forEach((camera) => {
+    //     console.log(camera);
+    //     output += USDZExport.BuildCamera(camera);
+    //   });
+    // } else {
+    //   output += USDZExport.BuildCamera(scene.activeCamera);
+    // }
 
     output += USDZExport.BuildSceneEnd();
 
@@ -84,9 +84,10 @@ export class USDZExport {
 
     output = null;
 
-    for (const id in textures) {
-      const texture = textures[id];
-      const canvas = USDZExport.ImageToCanvas(texture.image, texture.flipY);
+    for (const id in textures) {     
+      const texture = textures[id] as Texture;       
+      const image = await USDZExport.TextureToImage(texture);
+      const canvas = USDZExport.ImageToCanvas(image, texture.invertY);
       const blob: Blob = await new Promise((resolve) =>
         canvas.toBlob(resolve, "image/png", 1)
       );
@@ -127,6 +128,7 @@ export class USDZExport {
     metersPerUnit = 1
     upAxis = "Y"
 )
+
 `;
   }
 
@@ -147,20 +149,33 @@ export class USDZExport {
         {
         token preliminary:anchoring:type = "${options.ar.anchoring.type}"
         token preliminary:planeAnchoring:alignment = "${options.ar.planeAnchoring.alignment}"
+
 `;
   }
 
   static BuildSceneEnd() {
     return `
+
 		}
 	}
+}
+
+`;
+  }
+
+  static BuildMeshObject(_mesh: AbstractMesh) {
+    const mesh = USDZExport.BuildMesh( _mesh );
+	return `
+def "Geometry"
+{
+${mesh}
 }
 `;
   }
 
   static BuildMesh(mesh: AbstractMesh) {
     const name = mesh.name;
-    const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind); 
     const count = positions.length;
 
     //Need to support no normals.
@@ -168,7 +183,7 @@ export class USDZExport {
     const normalCount = normals.length;
 
     return `
-	def Mesh "${name}"
+def Mesh "mesh_${mesh.uniqueId}"
 	{
 		int[] faceVertexCounts = [${USDZExport.BuildMeshVertexCount(count)}]
 		int[] faceVertexIndices = [${USDZExport.BuildMeshVertexIndices(mesh)}]
@@ -176,7 +191,7 @@ export class USDZExport {
 			interpolation = "vertex"
 		)
     point3f[] points = [${USDZExport.BuildVector3Array(positions, count)}]
-${USDZExport.BuildPrimvars(mesh)}
+${USDZExport.BuildPrimVars(mesh)}
 		uniform token subdivisionScheme = "none"
 	}
 `;
@@ -222,14 +237,14 @@ ${USDZExport.BuildPrimvars(mesh)}
   }
 
   static BuildVector2Array(attribute, count) {
-    if (attribute.lenght) {
+    if(!attribute.length) {
       console.warn("USDZExporter: UVs missing.");
       return Array(count).fill("(0, 0)").join(", ");
     }
 
     const array = [];
 
-    for (let i = 0; i < attribute.count; i += 2) {
+    for (let i = 0; i < count; i += 2) {
       const x = attribute[i];
       const y = attribute[i + 1];
       array.push(
@@ -238,33 +253,46 @@ ${USDZExport.BuildPrimvars(mesh)}
         })`
       );
     }
-
     return array.join(", ");
   }
 
-  static BuildPrimvars(mesh: AbstractMesh) {
+  static BuildPrimVars(mesh: AbstractMesh) {
     let output = "";
-    const count = mesh.getVerticesData(VertexBuffer.PositionKind).length;
+    const count = (mesh.getVerticesData(VertexBuffer.PositionKind).length/3)*2;
+    let data = mesh.getVerticesData(VertexBuffer.UVKind)
+    console.log(count, data?.length)
     output += USDZExport.BuildUV(
-      mesh.getVerticesData(VertexBuffer.UVKind),
+      data,
       0,
       count
     );
-    output += USDZExport.BuildUV(
-      mesh.getVerticesData(VertexBuffer.UV2Kind),
-      1,
-      count
-    );
-    output += USDZExport.BuildUV(
-      mesh.getVerticesData(VertexBuffer.UV3Kind),
-      2,
-      count
-    );
-    output += USDZExport.BuildUV(
-      mesh.getVerticesData(VertexBuffer.UV4Kind),
-      3,
-      count
-    );
+    
+    data = mesh.getVerticesData(VertexBuffer.UV2Kind)
+    if(data?.length){
+      output += USDZExport.BuildUV(
+        mesh.getVerticesData(VertexBuffer.UV2Kind),
+        1,
+        count
+      );
+    }
+
+    data = mesh.getVerticesData(VertexBuffer.UV3Kind)
+    if(data?.length){
+      output += USDZExport.BuildUV(
+        mesh.getVerticesData(VertexBuffer.UV3Kind),
+        2,
+        count
+      );
+    }
+
+    data = mesh.getVerticesData(VertexBuffer.UV4Kind)
+    if(data?.length){
+      output += USDZExport.BuildUV(
+        mesh.getVerticesData(VertexBuffer.UV4Kind),
+        3,
+        count
+      );
+    }
     // output += USDZExport.BuildUV(mesh.getVerticesData(VertexBuffer.UV5Kind))
     // output += USDZExport.BuildUV(mesh.getVerticesData(VertexBuffer.UV6Kind))
     return output;
@@ -272,8 +300,7 @@ ${USDZExport.BuildPrimvars(mesh)}
 
   static BuildUV(uv, id, count) {
     let output = "";
-
-    if (uv?.lenght > 0) {
+    if (uv?.length > 0) {
       output += `
 		texCoord2f[] primvars:st${id} = [${USDZExport.BuildVector2Array(uv, count)}] (
 			interpolation = "vertex"
@@ -285,8 +312,13 @@ ${USDZExport.BuildPrimvars(mesh)}
 
   static BuildXform(mesh: AbstractMesh, material) {
     const name = "Object_" + mesh.uniqueId;
+    if(mesh.parent.name === "__root__"){
+      (mesh.parent as TransformNode).scaling.z = 1;
+    }
     const mat = mesh.getWorldMatrix();
     const transform = USDZExport.BuildMatrix(mat);
+
+    console.log(mat, mat.determinant())
 
     if (mat.determinant() < 0) {
       console.warn(
@@ -332,6 +364,8 @@ ${USDZExport.BuildPrimvars(mesh)}
     const mat = camera.getWorldMatrix();
 
     const transform = USDZExport.BuildMatrix(mat);
+
+    console.log(mat, mat.determinant())
 
     if (mat.determinant() < 0) {
       console.warn(
@@ -395,7 +429,7 @@ ${USDZExport.BuildPrimvars(mesh)}
       const material = materials[uuid];
 
       array.push(
-        USDZExport.BuildMaterialFromStandard(
+        USDZExport.BuildMaterial(
           material,
           textures,
           quickLookCompatible
@@ -410,8 +444,8 @@ ${array.join("")}
 `;
   }
 
-  static BuildMaterialFromStandard(
-    material: StandardMaterial,
+  static BuildMaterial(
+    material: PBRMaterial,
     textures,
     quickLookCompatible = false
   ) {
@@ -426,7 +460,7 @@ ${array.join("")}
 
       textures[id] = texture;
 
-      const uv = texture.coordinatesIndex;
+      const uv = texture.coordinatesIndex > 0 ? `st${texture.coordinatesIndex}` : `st`;
 
       /* TODO CHECK THIS */
       const WRAPPINGS = [
@@ -466,19 +500,17 @@ ${array.join("")}
       }
 
       return `
-		def Shader "PrimvarReader_${mapType}"
+		def Shader "PrimvarReader_${ mapType }"
 		{
 			uniform token info:id = "UsdPrimvarReader_float2"
 			float2 inputs:fallback = (0.0, 0.0)
 			token inputs:varname = "${uv}"
 			float2 outputs:result
 		}
-		def Shader "Transform2d_${mapType}"
+		def Shader "Transform2d_${ mapType }"
 		{
 			uniform token info:id = "UsdTransform2d"
-			token inputs:in.connect = </Materials/Material_${
-        material.id
-      }/PrimvarReader_${mapType}.outputs:result>
+			token inputs:in.connect = </Materials/Material_${ material.uniqueId }/PrimvarReader_${ mapType }.outputs:result>
 			float inputs:rotation = ${(rotation * (180 / Math.PI)).toFixed(
         USDZExport.Precision
       )}
@@ -491,7 +523,7 @@ ${array.join("")}
 			uniform token info:id = "UsdUVTexture"
 			asset inputs:file = @textures/Texture_${id}.png@
 			float2 inputs:st.connect = </Materials/Material_${
-        material.id
+        material.uniqueId
       }/Transform2d_${mapType}.outputs:result>
 			${
         color !== undefined
@@ -510,6 +542,7 @@ ${array.join("")}
           ? "float outputs:a"
           : "" /* TODO NEED A BETTER CHECK */
       }
+
 		}`;
     }
 
@@ -520,18 +553,18 @@ ${array.join("")}
       );
     }
 
-    if (material.diffuseTexture !== null) {
+    if (material.albedoTexture !== null) {
       inputs.push(
-        `${pad}color3f inputs:diffuseColor.connect = </Materials/Material_${material.uniqueId}/Texture_${material.diffuseTexture.uniqueId}_diffuse.outputs:rgb>`
+        `${pad}color3f inputs:diffuseColor.connect = </Materials/Material_${material.uniqueId}/Texture_${material.albedoTexture.uniqueId}_diffuse.outputs:rgb>`
       );
 
-      if (material.useAlphaFromDiffuseTexture) {
+      if (material.useAlphaFromAlbedoTexture) {
         inputs.push(
-          `${pad}float inputs:opacity.connect = </Materials/Material_${material.uniqueId}/Texture_${material.diffuseTexture.uniqueId}_diffuse.outputs:a>`
+          `${pad}float inputs:opacity.connect = </Materials/Material_${material.uniqueId}/Texture_${material.albedoTexture.uniqueId}_diffuse.outputs:a>`
         );
       } else if (material.needAlphaTesting) {
         inputs.push(
-          `${pad}float inputs:opacity.connect = </Materials/Material_${material.uniqueId}/Texture_${material.diffuseTexture.uniqueId}_diffuse.outputs:a>`
+          `${pad}float inputs:opacity.connect = </Materials/Material_${material.uniqueId}/Texture_${material.albedoTexture.uniqueId}_diffuse.outputs:a>`
         );
         inputs.push(
           `${pad}float inputs:opacityThreshold = ${material.alphaCutOff}`
@@ -540,15 +573,15 @@ ${array.join("")}
 
       samplers.push(
         buildTexture(
-          material.diffuseTexture as Texture,
+          material.albedoTexture as Texture,
           "diffuse",
-          material.diffuseColor
+          material.albedoColor
         )
       );
     } else {
       inputs.push(
         `${pad}color3f inputs:diffuseColor = ${USDZExport.BuildColor(
-          material.diffuseColor
+          material.albedoColor
         )}`
       );
     }
@@ -639,9 +672,11 @@ ${inputs.join("\n")}
 			int inputs:useSpecularWorkflow = 0
 			token outputs:surface
 		}
+
 		token outputs:surface.connect = </Materials/Material_${
       material.uniqueId
     }/PreviewSurface.outputs:surface>
+
 ${samplers.join("\n")}
 	}
 `;
@@ -662,7 +697,21 @@ ${samplers.join("\n")}
   static BuildUSDFileAsString(dataToInsert) {
     let output = USDZExport.BuildHeader();
     output += dataToInsert;
+    console.log(output)
+    //output += USDZExport.BuildFooter();
     return strToU8(output);
+  }
+
+  static async TextureToImage(texture): Promise<HTMLImageElement> {   
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.crossOrigin = "anonymous"
+      image.onload = ()=>{ 
+        resolve(image);
+      }
+      image.onerror = reject
+      image.src = texture.url.substring(5)
+    })
   }
 
   static ImageToCanvas(image, flipY): HTMLCanvasElement {
@@ -690,10 +739,11 @@ ${samplers.join("\n")}
         context.scale(1, -1);
       }
 
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);  
 
       return canvas;
     } else {
+      console.log("image", image);
       throw new Error(
         "BABYLON.USDZExport: No valid image data found. Unable to process texture."
       );
