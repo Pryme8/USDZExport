@@ -11,7 +11,7 @@ import { strToU8, zipSync } from "fflate";
 export class USDZExport {
   static Precision: number = 7;
 
-  static async Parse(scene: Scene, options: any = {}) {
+  static async Export(scene: Scene, options: any = {}) {
     options = {
       ar: {
         anchoring: { type: "plane" },

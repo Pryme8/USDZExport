@@ -84,7 +84,7 @@ export class TestScene {
     // });
 
     SceneLoader.ImportMesh("", "https://www.babylonjs.com/Assets/DamagedHelmet/glTF/", "DamagedHelmet.gltf", scene, (newMeshes)=>{
-      USDZExport.Parse(scene, {}).then((data) => {
+      USDZExport.Export(scene, {}).then((data) => {
         const downloadButton = document.createElement("a");   
         downloadButton.href = URL.createObjectURL( new Blob( [ data ], { type: 'application/octet-stream' } ));
         document.body.appendChild(downloadButton);
